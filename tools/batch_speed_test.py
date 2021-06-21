@@ -60,6 +60,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    dist_inited = False
 
     for config in args.configs:
         cfg = Config.fromfile(config)
@@ -90,11 +91,12 @@ def main():
         # init distributed env first, since logger depends on the dist info.
         if args.launcher == 'none':
             distributed = False
-        else:
+        elif not dist_inited:
             distributed = True
             init_dist(args.launcher, **cfg.dist_params)
             _, world_size = get_dist_info()
             cfg.gpu_ids = range(world_size)
+            dist_inited = True
 
         # create work_dir
         mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
