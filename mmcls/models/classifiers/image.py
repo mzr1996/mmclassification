@@ -1,5 +1,6 @@
 import copy
 import warnings
+from time import time
 
 from ..builder import CLASSIFIERS, build_backbone, build_head, build_neck
 from ..utils.augment import Augments
@@ -83,11 +84,17 @@ class ImageClassifier(BaseClassifier):
         if self.augments is not None:
             img, gt_label = self.augments(img, gt_label)
 
+        tik = time()
         x = self.extract_feat(img)
+        extract_feat_time = time() - tik
 
+        tik = time()
         losses = dict()
         loss = self.head.forward_train(x, gt_label)
         losses.update(loss)
+        head_time = time() - tik
+        losses.update(
+            dict(extract_feat_time=extract_feat_time, head_time=head_time))
 
         return losses
 
