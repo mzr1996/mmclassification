@@ -2,6 +2,8 @@ import copy
 import warnings
 from time import time
 
+import torch
+
 from ..builder import CLASSIFIERS, build_backbone, build_head, build_neck
 from ..utils.augment import Augments
 from .base import BaseClassifier
@@ -93,8 +95,9 @@ class ImageClassifier(BaseClassifier):
         loss = self.head.forward_train(x, gt_label)
         losses.update(loss)
         head_time = time() - tik
-        losses.update(
-            dict(extract_feat_time=extract_feat_time, head_time=head_time))
+        losses['time'] = dict(
+            extract_feat_time=torch.tensor(extract_feat_time),
+            head_time=torch.tensor(head_time))
 
         return losses
 
