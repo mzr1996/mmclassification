@@ -1,3 +1,4 @@
+import time
 import warnings
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
@@ -108,12 +109,18 @@ class BaseClassifier(BaseModule, metaclass=ABCMeta):
                    if 'loss' in _key)
 
         log_vars['loss'] = loss
+        time_dict = {}
         for loss_name, loss_value in log_vars.items():
+            tik = time.time()
             # reduce loss when distributed training
             if dist.is_available() and dist.is_initialized():
                 loss_value = loss_value.data.clone()
                 dist.all_reduce(loss_value.div_(dist.get_world_size()))
-            log_vars[loss_name] = loss_value.item()
+            log_vars[loss_name] = loss_value.data.item()
+
+            time_dict.update({f'parse_{loss_name}_time': time.time() - tik})
+
+        log_vars.update(time_dict)
 
         return loss, log_vars
 
@@ -142,8 +149,12 @@ class BaseClassifier(BaseModule, metaclass=ABCMeta):
                     is DDP, it means the batch size on each GPU), which is \
                     used for averaging the logs.
         """
+        tik = time.time()
         losses = self(**data)
+        model_time = time.time() - tik
         loss, log_vars = self._parse_losses(losses)
+
+        log_vars['model_time'] = model_time
 
         outputs = dict(
             loss=loss, log_vars=log_vars, num_samples=len(data['img'].data))
