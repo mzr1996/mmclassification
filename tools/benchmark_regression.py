@@ -17,12 +17,17 @@ from mmcls.utils import collect_env, get_root_logger
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train a model')
+    parser = argparse.ArgumentParser(
+        description='Benchmark Regression on mulit models')
     parser.add_argument('--configs', nargs='+', help='train config files path')
     parser.add_argument('--work-dir', help='the dir to save logs and models')
-    parser.add_argument('--epochs', type=int, help='how many epochs to train')
     parser.add_argument(
-        '--validate',
+        '--epochs',
+        type=int,
+        default=0,
+        help='how many epochs to train, if 0, use config setting.')
+    parser.add_argument(
+        '--no-validate',
         action='store_true',
         help='whether not to evaluate the checkpoint during training')
     group_gpus = parser.add_mutually_exclusive_group()
@@ -75,7 +80,7 @@ def main():
             work_dir_root = args.work_dir
         else:
             # use config filename as default work_dir if cfg.work_dir is None
-            work_dir_root = './work_dirs/speed_test'
+            work_dir_root = './work_dirs/benchmark_regression'
 
         cfg.work_dir = osp.join(work_dir_root,
                                 osp.splitext(osp.basename(config))[0])
@@ -85,7 +90,7 @@ def main():
         else:
             cfg.gpu_ids = range(1) if args.gpus is None else range(args.gpus)
 
-        if args.epochs is not None:
+        if args.epochs > 0:
             cfg.runner.max_epochs = args.epochs
 
         # init distributed env first, since logger depends on the dist info.
@@ -151,7 +156,7 @@ def main():
             datasets,
             cfg,
             distributed=distributed,
-            validate=args.validate,
+            validate=(not args.no_validate),
             timestamp=timestamp,
             device='cpu' if args.device == 'cpu' else 'cuda',
             meta=meta)
