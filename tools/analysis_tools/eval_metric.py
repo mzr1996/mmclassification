@@ -1,8 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
-import itertools
 import json
-from unittest.mock import MagicMock
 
 import mmengine
 import rich
@@ -44,9 +42,7 @@ def main():
     predictions = mmengine.load(args.pkl_results)
 
     evaluator = Evaluator(cfg.test_evaluator)
-    # dataset is not needed, use an endless iterator to mock it.
-    fake_dataset = itertools.repeat({'data_sample': MagicMock()})
-    eval_results = evaluator.offline_evaluate(fake_dataset, predictions)
+    eval_results = evaluator.offline_evaluate(predictions)
     rich.print_json(json.dumps(eval_results))
 
 
