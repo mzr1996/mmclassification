@@ -182,7 +182,7 @@ class ClsDataSample(BaseDataElement):
         return self
 
     @property
-    def gt_label(self):
+    def gt_label(self) -> LabelData:
         return self._gt_label
 
     @gt_label.setter
@@ -204,6 +204,19 @@ class ClsDataSample(BaseDataElement):
     @pred_label.deleter
     def pred_label(self):
         del self._pred_label
+
+    def pin_memory(self):
+        if 'gt_label' in self._data_fields:
+            if 'label' in self.gt_label._data_fields:
+                self.gt_label.label = self.gt_label.label.pin_memory()
+            if 'score' in self.gt_label._data_fields:
+                self.gt_label.score = self.gt_label.score.pin_memory()
+        if 'pred_label' in self._data_fields:
+            if 'label' in self.pred_label._data_fields:
+                self.pred_label.label = self.pred_label.label.pin_memory()
+            if 'score' in self.pred_label._data_fields:
+                self.pred_label.score = self.pred_label.score.pin_memory()
+        return self
 
 
 def _reduce_cls_datasample(data_sample):
