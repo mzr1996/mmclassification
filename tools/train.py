@@ -47,6 +47,11 @@ def parse_args():
         help='whether to disable the persistent_workers option in dataloaders.'
     )
     parser.add_argument(
+        '--extra-cfg',
+        type=str,
+        help='Extra string format configs.'
+    )
+    parser.add_argument(
         '--cfg-options',
         nargs='+',
         action=DictAction,
@@ -134,6 +139,7 @@ def merge_args(cfg, args):
 
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+        cfg.merge_from_dict(Config.fromstring(args.extra_cfg, file_format='.py'))
 
     return cfg
 
