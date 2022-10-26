@@ -6,15 +6,16 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn
-from torch.utils.data import DataLoader
-
 from mmengine.evaluator import Evaluator
 from mmengine.registry import LOOPS
 from mmengine.runner.amp import autocast
 from mmengine.runner.base_loop import BaseLoop
 from mmengine.runner.utils import calc_dynamic_intervals
+from torch.utils.data import DataLoader
+
 
 class data_prefetcher():
+
     def __init__(self, loader, data_preprocesor):
         self.loader = loader
         self.stream = torch.cuda.Stream()
@@ -53,7 +54,7 @@ class data_prefetcher():
         first = True
         for next_input in self.loader:
             with torch.cuda.stream(self.stream):
-                next_input = self.data_preprocesor(next_input)
+                next_input = self.data_preprocesor(next_input, training=True)
             if first:
                 first = False
             else:
@@ -76,6 +77,8 @@ class data_prefetcher():
 
 
 del LOOPS._module_dict['EpochBasedTrainLoop']
+
+
 @LOOPS.register_module()
 class EpochBasedTrainLoop(BaseLoop):
     """Loop for epoch-based training.
@@ -103,8 +106,8 @@ class EpochBasedTrainLoop(BaseLoop):
             val_interval: int = 1,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(runner, dataloader)
-        #  self.dataloader = data_prefetcher(self.dataloader, runner.model.data_preprocessor)
-        #  runner.model.data_preprocesor = torch.nn.Identity()
+        self.dataloader = data_prefetcher(self.dataloader,
+                                          runner.model.data_preprocessor)
         self._max_epochs = int(max_epochs)
         assert self._max_epochs == max_epochs, \
             f'`max_epochs` should be a integer number, but get {max_epochs}.'
@@ -197,5 +200,3 @@ class EpochBasedTrainLoop(BaseLoop):
         """Dynamically modify the ``val_interval``."""
         step = bisect.bisect(self.dynamic_milestones, (self.epoch + 1))
         self.val_interval = self.dynamic_intervals[step - 1]
-
-

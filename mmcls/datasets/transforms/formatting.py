@@ -92,14 +92,13 @@ class PackClsInputs(BaseTransform):
                 'in the data pipeline or images have been loaded in '
                 'the dataset.')
 
-        data_sample = ClsDataSample()
         if 'gt_label' in results:
+            from mmcls.structures.cls_data_sample import format_label
             gt_label = results['gt_label']
-            data_sample.set_gt_label(gt_label)
+            packed_results['gt_labels'] = format_label(gt_label)
 
         img_meta = {k: results[k] for k in self.meta_keys if k in results}
-        data_sample.set_metainfo(img_meta)
-        packed_results['data_samples'] = data_sample
+        packed_results['data_samples'] = ClsDataSample(metainfo=img_meta)
 
         return packed_results
 

@@ -146,12 +146,12 @@ class CutMix(Mixup):
             Tuple[Tensor, Tensor): The mixed inputs and labels.
         """
         lam = np.random.beta(self.alpha, self.alpha)
-        batch_size = batch_inputs.size(0)
         img_shape = batch_inputs.shape[-2:]
-        index = torch.randperm(batch_size)
 
         (y1, y2, x1, x2), lam = self.cutmix_bbox_and_lam(img_shape, lam)
-        batch_inputs[:, :, y1:y2, x1:x2] = batch_inputs[index, :, y1:y2, x1:x2]
-        mixed_scores = lam * batch_scores + (1 - lam) * batch_scores[index, :]
+        batch_inputs[:, :, y1:y2, x1:x2] = batch_inputs[:, :, y1:y2,
+                                                        x1:x2].flip(0)
+        mixed_scores = batch_scores.flip(0).mul_(1 - lam).add_(
+            batch_scores, alpha=lam)
 
         return batch_inputs, mixed_scores

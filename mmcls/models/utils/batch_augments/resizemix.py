@@ -81,15 +81,14 @@ class ResizeMix(CutMix):
         lam = np.random.beta(self.alpha, self.alpha)
         lam = lam * (self.lam_max - self.lam_min) + self.lam_min
         img_shape = batch_inputs.shape[-2:]
-        batch_size = batch_inputs.size(0)
-        index = torch.randperm(batch_size)
 
         (y1, y2, x1, x2), lam = self.cutmix_bbox_and_lam(img_shape, lam)
         batch_inputs[:, :, y1:y2, x1:x2] = F.interpolate(
-            batch_inputs[index],
+            batch_inputs.flip(0),
             size=(y2 - y1, x2 - x1),
             mode=self.interpolation,
             align_corners=False)
-        mixed_scores = lam * batch_scores + (1 - lam) * batch_scores[index, :]
+        mixed_scores = batch_scores.flip(0).mul_(1 - lam).add_(
+            batch_scores, alpha=lam)
 
         return batch_inputs, mixed_scores

@@ -47,11 +47,11 @@ class Mixup:
             Tuple[Tensor, Tensor): The mixed inputs and labels.
         """
         lam = np.random.beta(self.alpha, self.alpha)
-        batch_size = batch_inputs.size(0)
-        index = torch.randperm(batch_size)
 
-        mixed_inputs = lam * batch_inputs + (1 - lam) * batch_inputs[index, :]
-        mixed_scores = lam * batch_scores + (1 - lam) * batch_scores[index, :]
+        mixed_inputs = batch_inputs.flip(0).mul_(1 - lam).add_(
+            batch_inputs, alpha=lam)
+        mixed_scores = batch_scores.flip(0).mul_(1 - lam).add_(
+            batch_scores, alpha=lam)
 
         return mixed_inputs, mixed_scores
 

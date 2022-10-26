@@ -8,8 +8,9 @@ import torch.nn.functional as F
 from mmengine.model import BaseDataPreprocessor, stack_batch
 
 from mmcls.registry import MODELS
-from mmcls.structures import (batch_label_to_onehot, cat_batch_labels,
-                              stack_batch_scores, tensor_split)
+from mmcls.structures import (ClsDataSample, batch_label_to_onehot,
+                              cat_batch_labels, stack_batch_scores,
+                              tensor_split)
 from .batch_augments import RandomBatchAugment
 
 
@@ -111,12 +112,16 @@ class ClsDataPreprocessor(BaseDataPreprocessor):
 
             # ------ To RGB ------
             if self.to_rgb and inputs.size(1) == 3:
+                #  torch.cuda.nvtx.range_push('flip')
                 inputs = inputs.flip(1)
+                #  torch.cuda.nvtx.range_pop()
 
             # -- Normalization ---
             inputs = inputs.float()
             if self._enable_normalize:
-                inputs = (inputs - self.mean) / self.std
+                #  torch.cuda.nvtx.range_push('normalize')
+                inputs = inputs.sub_(self.mean).div_(self.std)
+                #  torch.cuda.nvtx.range_pop()
 
             # ------ Padding -----
             if self.pad_size_divisor > 1:
@@ -150,36 +155,25 @@ class ClsDataPreprocessor(BaseDataPreprocessor):
             inputs = stack_batch(processed_inputs, self.pad_size_divisor,
                                  self.pad_value)
 
-        data_samples = data.get('data_samples', None)
-        if data_samples is not None and 'gt_label' in data_samples[0]:
-            gt_labels = [sample.gt_label for sample in data_samples]
-            batch_label, label_indices = cat_batch_labels(
-                gt_labels, device=self.device)
+        gt_labels = self.cast_data(data.get('gt_labels', None))
+        gt_scores = self.cast_data(data.get('gt_scores', None))
+        data_samples = data['data_samples']
+        if gt_labels is not None:
+            if gt_scores is None and self.to_onehot:
+                #  torch.cuda.nvtx.range_push('to_onehot')
+                num_classes = self.num_classes
+                gt_scores = F.one_hot(gt_labels.flatten(), num_classes)
+                #  torch.cuda.nvtx.range_pop()
+            for sample, label in zip(data_samples, gt_labels):
+                sample.set_gt_label(label)
 
-            batch_score = stack_batch_scores(gt_labels, device=self.device)
-            if batch_score is None and self.to_onehot:
-                assert batch_label is not None, \
-                    'Cannot generate onehot format labels because no labels.'
-                num_classes = self.num_classes or data_samples[0].get(
-                    'num_classes')
-                assert num_classes is not None, \
-                    'Cannot generate one-hot format labels because not set ' \
-                    '`num_classes` in `data_preprocessor`.'
-                batch_score = batch_label_to_onehot(batch_label, label_indices,
-                                                    num_classes)
-
+        if gt_scores is not None:
             # ----- Batch Augmentations ----
             if training and self.batch_augments is not None:
-                inputs, batch_score = self.batch_augments(inputs, batch_score)
-
-            # ----- scatter labels and scores to data samples ---
-            if batch_label is not None:
-                for sample, label in zip(
-                        data_samples, tensor_split(batch_label,
-                                                   label_indices)):
-                    sample.set_gt_label(label)
-            if batch_score is not None:
-                for sample, score in zip(data_samples, batch_score):
-                    sample.set_gt_score(score)
+                #  torch.cuda.nvtx.range_push('batch_augments')
+                inputs, gt_scores = self.batch_augments(inputs, gt_scores)
+                #  torch.cuda.nvtx.range_pop()
+            for sample, score in zip(data_samples, gt_scores):
+                sample.set_gt_score(score)
 
         return {'inputs': inputs, 'data_samples': data_samples}
