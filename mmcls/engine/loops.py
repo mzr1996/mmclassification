@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 class data_prefetcher():
 
     def __init__(self, loader, data_preprocesor):
+        print('Use prefetcher')
         self.loader = loader
         self.stream = torch.cuda.Stream()
         self.data_preprocesor = data_preprocesor
@@ -52,12 +53,15 @@ class data_prefetcher():
 
     def __iter__(self):
         first = True
+        #  last_time = time.perf_counter()
         for next_input in self.loader:
             with torch.cuda.stream(self.stream):
                 next_input = self.data_preprocesor(next_input, training=True)
             if first:
                 first = False
             else:
+                #  print((time.perf_counter() - last_time)*1000)
+                #  last_time = time.perf_counter()
                 yield input
 
             torch.cuda.current_stream().wait_stream(self.stream)
@@ -76,11 +80,8 @@ class data_prefetcher():
         return self.loader.dataset
 
 
-del LOOPS._module_dict['EpochBasedTrainLoop']
-
-
 @LOOPS.register_module()
-class EpochBasedTrainLoop(BaseLoop):
+class EpochBasedPrefetchTrainLoop(BaseLoop):
     """Loop for epoch-based training.
 
     Args:
@@ -106,8 +107,11 @@ class EpochBasedTrainLoop(BaseLoop):
             val_interval: int = 1,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(runner, dataloader)
-        self.dataloader = data_prefetcher(self.dataloader,
-                                          runner.model.data_preprocessor)
+        if hasattr(runner.model, 'module'):
+            data_preprocessor = runner.model.module.data_preprocessor
+        else:
+            data_preprocessor = runner.model.data_preprocessor
+        self.dataloader = data_prefetcher(self.dataloader, data_preprocessor)
         self._max_epochs = int(max_epochs)
         assert self._max_epochs == max_epochs, \
             f'`max_epochs` should be a integer number, but get {max_epochs}.'
@@ -169,8 +173,13 @@ class EpochBasedTrainLoop(BaseLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
+        start_time = time.perf_counter()
         for idx, data_batch in enumerate(self.dataloader):
+            print(f'get_data: {(time.perf_counter() - start_time)*1000}')
+            start_time = time.perf_counter()
             self.run_iter(idx, data_batch)
+            print(f'run_iter: {(time.perf_counter() - start_time)*1000}')
+            start_time = time.perf_counter()
 
         self.runner.call_hook('after_train_epoch')
         self._epoch += 1

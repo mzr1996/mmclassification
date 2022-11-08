@@ -53,4 +53,5 @@ param_scheduler = [
         end=600)
 ]
 
-train_cfg = dict(by_epoch=True, max_epochs=600)
+_base_['train_dataloader']['dataset']['pipeline'][0] = dict(type='LoadFakeImageFromFile')
+train_cfg = dict(type='EpochBasedPrefetchTrainLoop', max_epochs=600, _delete_=True)

@@ -7,6 +7,7 @@ from .formatting import Collect, PackClsInputs, ToNumpy, ToPIL, Transpose
 from .processing import (Albumentations, ColorJitter, EfficientNetCenterCrop,
                          EfficientNetRandomCrop, Lighting, RandomCrop,
                          RandomErasing, RandomResizedCrop, ResizeEdge)
+from .fake import LoadFakeImageFromFile
 
 __all__ = [
     'ToPIL', 'ToNumpy', 'Transpose', 'Collect', 'RandomCrop',
