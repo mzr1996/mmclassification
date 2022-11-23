@@ -205,3 +205,10 @@ class TimmClassifier(BaseClassifier):
             new_key = re.sub(f'^{prefix}', new_prefix, k)
             state_dict[new_key] = state_dict[k]
             del state_dict[k]
+
+    def no_weight_decay(self):
+        if hasattr(self.model, 'no_weight_decay'):
+            no_weight_decay = set(self.model.no_weight_decay())
+            no_weight_decay = {'model.' + key for key in no_weight_decay}
+            return no_weight_decay
+        return {}
