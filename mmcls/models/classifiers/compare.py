@@ -1,40 +1,48 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import re
 from collections import OrderedDict
 from typing import Dict, Optional, Tuple, Union
-import re
 
 import torch
 import torch.nn as nn
+from mmengine.config import ConfigDict
 from mmengine.logging import MMLogger
 from mmengine.model import BaseModel
 from mmengine.optim import OptimWrapper, OptimWrapperDict
-from mmengine.config import ConfigDict
 
 from mmcls.registry import MODELS
 
-map_dict = [
-    ConfigDict(pattern=r'^cls_token',
-         repl=r'backbone.cls_token'),
-    ConfigDict(pattern=r'^pos_embed',
-         repl=r'backbone.pos_embed'),
-    ConfigDict(pattern=r'^patch_embed.proj', repl=r'backbone.patch_embed.projection'),
-    ConfigDict(pattern=r'blocks.(\d+).gamma_1',
-         repl=r'backbone.layers.{0}.attn.gamma1.weight'),
-    ConfigDict(pattern=r'blocks.(\d+).gamma_2',
-         repl=r'backbone.layers.{0}.ffn.gamma2.weight'),
-    ConfigDict(pattern=r'blocks.(\d+).norm1',
-         repl=r'backbone.layers.{0}.ln1'),
-    ConfigDict(pattern=r'blocks.(\d+).norm2',
-         repl=r'backbone.layers.{0}.ln2'),
-    ConfigDict(pattern=r'blocks.(\d+).attn',
-         repl=r'backbone.layers.{0}.attn'),
-    ConfigDict(pattern=r'blocks.(\d+).mlp.fc1',
-         repl=r'backbone.layers.{0}.ffn.layers.0.0'),
-    ConfigDict(pattern=r'blocks.(\d+).mlp.fc2',
-         repl=r'backbone.layers.{0}.ffn.layers.1'),
-    ConfigDict(pattern=r'^norm', repl=r'backbone.ln1'),
-    ConfigDict(pattern=r'^head', repl=r'head.layers.head'),
-]
+
+def convert_key(key, rules):
+    """Convert key name according to a series of rules.
+
+    Every rule is a dict and should have the below keys:
+
+    - **pattern**:
+    - **repl**
+    """
+    for rule in rules:
+        assert 'pattern' in rule
+        pattern = rule.pattern
+        match = re.match(pattern, key)
+        if match is None:
+            continue
+        match_group = match.groups()
+        repl = rule.get('repl', None)
+
+        key_action = rule.get('key_action', None)
+        if key_action is not None:
+            #  key_action = eval(key_action)
+            assert callable(key_action)
+            match_group = key_action(*match_group)
+        start, end = match.span(0)
+        if repl is not None:
+            key = key[:start] + repl.format(*match_group) + key[end:]
+        else:
+            for i, sub in enumerate(match_group):
+                start, end = match.span(i + 1)
+                key = key[:start] + str(sub) + key[end:]
+    return key
 
 
 @MODELS.register_module()
@@ -47,6 +55,7 @@ class CompareClassifiers(BaseModel):
         model2: dict,
         train_cfg: Optional[dict] = None,
         data_preprocessor: Optional[dict] = None,
+        map_dict=None,
     ):
         if data_preprocessor is None:
             data_preprocessor = {}
@@ -68,6 +77,12 @@ class CompareClassifiers(BaseModel):
         else:
             self.model2 = model2
         torch.save(self.model2.state_dict(), 'model2.pth')
+        if map_dict is None:
+            map_dict = [
+                ConfigDict(pattern=key2, repl=key1) for key2, key1 in zip(
+                    self.model2.state_dict(), self.model1.state_dict())
+            ]
+        self.map_dict = map_dict
 
     def train_step(self, data: Union[dict, tuple, list],
                    optim_wrapper: OptimWrapperDict) -> Dict[str, torch.Tensor]:
@@ -86,10 +101,11 @@ class CompareClassifiers(BaseModel):
         all_info2, grad_norm2 = self.step_optimizer(optim_wrapper['model2'],
                                                     parsed_losses2,
                                                     self.model2.model)
-        self._compare_finely(all_info1, all_info2, map_dict)
+        self._compare_finely(all_info1, all_info2)
+        self._compare_parameters(self.model1, self.model2.model)
         logger = MMLogger.get_current_instance()
         # If the grad_norm is slightly different but all grad is the same,
-        # it's probabily caused by the parameter order. Don't worry.
+        # it's probably caused by the parameter order. Don't worry.
         logger.info(f'\nloss1: {parsed_losses1}'
                     f'\nloss2: {parsed_losses2}'
                     f'\ngrad_norm1: {grad_norm1.item()}'
@@ -103,6 +119,7 @@ class CompareClassifiers(BaseModel):
         all_info = OrderedDict()
         device = self.data_preprocessor.device
         global_grad_norm = torch.zeros(1, device=device)
+
         def get_name(src):
             for name, dst in module.named_parameters():
                 if src is dst:
@@ -127,41 +144,17 @@ class CompareClassifiers(BaseModel):
         optimizer.zero_grad()
         return all_info, global_grad_norm
 
-    def _compare_finely(self, all_info1, all_info2, match_mapping):
+    def _compare_finely(self, all_info1, all_info2):
         assert len(all_info1) == len(all_info2)
 
         all_match = True
         logger = MMLogger.get_current_instance()
 
-        def convert_key(key):
-            for item in match_mapping:
-                assert 'pattern' in item
-                pattern = item.pattern
-                match = re.match(pattern, key)
-                if match is None:
-                    continue
-                match_group = match.groups()
-                repl = item.get('repl', None)
-
-                key_action = item.get('key_action', None)
-                if key_action is not None:
-                    #  key_action = eval(key_action)
-                    assert callable(key_action)
-                    match_group = key_action(*match_group)
-                start, end = match.span(0)
-                if repl is not None:
-                    key = key[:start] + repl.format(*match_group) + key[end:]
-                else:
-                    for i, sub in enumerate(match_group):
-                        start, end = match.span(i+1)
-                        key = key[:start] + str(sub) + key[end:]
-            return key
-
         for key2, info2 in all_info2.items():
             grad2 = info2['grad']
             optimizer_args2 = info2['optimizer_args']
-            key1 = convert_key(key2)
-            assert key1 in all_info1
+            key1 = convert_key(key2, self.map_dict)
+            assert key1 in all_info1, f'{key1} not in {list(all_info1.keys())}'
             info1 = all_info1[key1]
             grad1 = info1['grad']
             optimizer_args1 = info1['optimizer_args']
@@ -170,14 +163,26 @@ class CompareClassifiers(BaseModel):
             if (grad1 != grad2).any():
                 all_match = False
                 logger.info(
-                    f'The grad of "{key1}" if different between two models.')
+                    f'The grad of "{key1}" is different between two models.')
             if optimizer_args1 != optimizer_args2:
                 all_match = False
                 logger.info(
-                    f'The grad of "{key1}" if different between two models.')
+                    f'The optimizer args of "{key1}" is different between two models.'
+                )
         if all_match:
             logger.info('All grad match.')
 
+    def _compare_parameters(self, model1, model2):
+        params1 = dict(model1.named_parameters())
+        params2 = dict(model2.named_parameters())
+        logger = MMLogger.get_current_instance()
+        for key2, p2 in reversed(params2.items()):
+            key1 = convert_key(key2, self.map_dict)
+            p1 = params1[key1]
+            if (p1 != p2).any():
+                logger.info(
+                    f'The parameter of "{key1}" is different between two models.'
+                )
 
     def _run_forward(self, model: nn.Module, data: Union[dict, tuple, list],
                      mode: str) -> Union[Dict[str, torch.Tensor], list]:
