@@ -2,13 +2,12 @@
 import copy
 import os.path as osp
 from os import PathLike
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import mmengine
-from mmcv.transforms import Compose
-from mmengine.fileio import FileClient
+from mmengine.dataset import BaseDataset
 
-from .builder import DATASETS
+from mmcls.registry import DATASETS, TRANSFORMS
 
 
 def expanduser(path):
@@ -23,7 +22,7 @@ def isabs(uri):
 
 
 @DATASETS.register_module()
-class MultiTaskDataset:
+class MultiTaskDataset(BaseDataset):
     """Custom dataset for multi-task dataset.
 
     To use the dataset, please generate and provide an annotation file in the
@@ -136,61 +135,47 @@ class MultiTaskDataset:
             represents a operation defined in :mod:`mmcls.datasets.pipelines`.
             Defaults to an empty tuple.
         test_mode (bool): in train mode or test mode. Defaults to False.
-        file_client_args (dict, optional): Arguments to instantiate a
-            FileClient. See :class:`mmengine.fileio.FileClient` for details.
-            If None, automatically inference from the ``data_root``.
-            Defaults to None.
     """
     METAINFO = dict()
 
     def __init__(self,
                  ann_file: str,
                  metainfo: Optional[dict] = None,
-                 data_root: Optional[str] = None,
-                 data_prefix: Optional[str] = None,
+                 data_root: str = '',
+                 data_prefix: Union[str, dict] = '',
+                 filter_cfg: Optional[dict] = None,
+                 indices: Optional[Union[int, Sequence[int]]] = None,
+                 serialize_data: bool = True,
                  pipeline: Sequence = (),
                  test_mode: bool = False,
-                 file_client_args: Optional[dict] = None):
+                 lazy_init: bool = False,
+                 max_refetch: int = 1000):
 
-        self.data_root = expanduser(data_root)
+        if isinstance(data_prefix, str):
+            data_prefix = dict(img_path=expanduser(data_prefix))
 
-        # Inference the file client
-        if self.data_root is not None:
-            file_client = FileClient.infer_client(
-                file_client_args, uri=self.data_root)
-        else:
-            file_client = FileClient(file_client_args)
-        self.file_client: FileClient = file_client
+        ann_file = expanduser(ann_file)
+        self._metainfo_override = metainfo
 
-        self.ann_file = self._join_root(expanduser(ann_file))
-        self.data_prefix = self._join_root(data_prefix)
+        transforms = []
+        for transform in pipeline:
+            if isinstance(transform, dict):
+                transforms.append(TRANSFORMS.build(transform))
+            else:
+                transforms.append(transform)
 
-        self.test_mode = test_mode
-        self.pipeline = Compose(pipeline)
-        self.data_list = self.load_data_list(self.ann_file, metainfo)
-
-    def _join_root(self, path):
-        """Join ``self.data_root`` with the specified path.
-
-        If the path is an absolute path, just return the path. And if the
-        path is None, return ``self.data_root``.
-
-        Examples:
-            >>> self.data_root = 'a/b/c'
-            >>> self._join_root('d/e/')
-            'a/b/c/d/e'
-            >>> self._join_root('https://openmmlab.com')
-            'https://openmmlab.com'
-            >>> self._join_root(None)
-            'a/b/c'
-        """
-        if path is None:
-            return self.data_root
-        if isabs(path):
-            return path
-
-        joined_path = self.file_client.join_path(self.data_root, path)
-        return joined_path
+        super().__init__(
+            ann_file=ann_file,
+            metainfo=metainfo,
+            data_root=data_root,
+            data_prefix=data_prefix,
+            filter_cfg=filter_cfg,
+            indices=indices,
+            serialize_data=serialize_data,
+            pipeline=transforms,
+            test_mode=test_mode,
+            lazy_init=lazy_init,
+            max_refetch=max_refetch)
 
     @classmethod
     def _get_meta_info(cls, in_metainfo: dict = None) -> dict:
@@ -211,17 +196,13 @@ class MultiTaskDataset:
 
         return metainfo
 
-    def load_data_list(self, ann_file, metainfo_override=None):
+    def load_data_list(self):
         """Load annotations from an annotation file.
-
-        Args:
-            ann_file (str): Absolute annotation file path if ``self.root=None``
-                or relative path if ``self.root=/path/to/data/``.
 
         Returns:
             list[dict]: A list of annotation.
         """
-        annotations = mmengine.load(ann_file)
+        annotations = mmengine.load(self.ann_file)
         if not isinstance(annotations, dict):
             raise TypeError(f'The annotations loaded from annotation file '
                             f'should be a dict, but got {type(annotations)}!')
@@ -234,11 +215,9 @@ class MultiTaskDataset:
         # Set meta information.
         assert isinstance(metainfo, dict), 'The `metainfo` field in the '\
             f'annotation file should be a dict, but got {type(metainfo)}'
-        if metainfo_override is not None:
-            assert isinstance(metainfo_override, dict), 'The `metainfo` ' \
-                f'argument should be a dict, but got {type(metainfo_override)}'
-            metainfo.update(metainfo_override)
         self._metainfo = self._get_meta_info(metainfo)
+        if self._metainfo_override is not None:
+            self._metainfo.update(self._metainfo_override)
 
         data_list = []
         for i, raw_data in enumerate(raw_data_list):
@@ -266,54 +245,12 @@ class MultiTaskDataset:
             f'The item should be a dict, but got {type(raw_data)}'
         assert 'img_path' in raw_data, \
             "The item doesn't have `img_path` field."
+        img_prefix = self.data_prefix['img_path']
         data = dict(
-            img_path=self._join_root(raw_data['img_path']),
+            img_path=mmengine.join_path(img_prefix, raw_data['img_path']),
             gt_label=raw_data['gt_label'],
         )
         return data
-
-    @property
-    def metainfo(self) -> dict:
-        """Get meta information of dataset.
-
-        Returns:
-            dict: meta information collected from ``cls.METAINFO``,
-            annotation file and metainfo argument during instantiation.
-        """
-        return copy.deepcopy(self._metainfo)
-
-    def prepare_data(self, idx):
-        """Get data processed by ``self.pipeline``.
-
-        Args:
-            idx (int): The index of ``data_info``.
-
-        Returns:
-            Any: Depends on ``self.pipeline``.
-        """
-        results = copy.deepcopy(self.data_list[idx])
-        return self.pipeline(results)
-
-    def __len__(self):
-        """Get the length of the whole dataset.
-
-        Returns:
-            int: The length of filtered dataset.
-        """
-        return len(self.data_list)
-
-    def __getitem__(self, idx):
-        """Get the idx-th image and data information of dataset after
-        ``self.pipeline``.
-
-        Args:
-            idx (int): The index of of the data.
-
-        Returns:
-            dict: The idx-th image and data information after
-            ``self.pipeline``.
-        """
-        return self.prepare_data(idx)
 
     def __repr__(self):
         """Print the basic information of the dataset.

@@ -932,7 +932,7 @@ class TestMultiTaskDataset(TestCase):
         # Test default behavior
         dataset = dataset_class(**self.DEFAULT_ARGS)
 
-        data = dataset.load_data_list(self.DEFAULT_ARGS['ann_file'])
+        data = dataset.load_data_list()
         self.assertIsInstance(data, list)
         np.testing.assert_equal(len(data), 3)
         np.testing.assert_equal(data[0]['gt_label'], {'gender': 0})
