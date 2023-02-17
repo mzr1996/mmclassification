@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 from mmengine.fileio import dump
 from rich import print_json
 
-from mmcls.apis import inference_model, init_model
+from mmpretrain.apis import inference_model, init_model
 
 
 def main():

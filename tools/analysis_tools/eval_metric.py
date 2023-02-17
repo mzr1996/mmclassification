@@ -35,7 +35,7 @@ def main():
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
-    init_default_scope('mmcls')  # Use mmcls as default scope.
+    init_default_scope('mmpretrain')  # Use mmpretrain as default scope.
 
     predictions = mmengine.load(args.pkl_results)
 

@@ -6,7 +6,7 @@ import re
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mmcls.utils import load_json_log
+from mmpretrain.utils import load_json_log
 
 TEST_METRICS = ('precision', 'recall', 'f1_score', 'support', 'mAP', 'CP',
                 'CR', 'CF1', 'OP', 'OR', 'OF1', 'accuracy')
