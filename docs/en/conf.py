@@ -12,7 +12,6 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
-import subprocess
 import sys
 
 import pytorch_sphinx_theme
@@ -29,14 +28,7 @@ author = 'MMClassification Authors'
 # The full version, including alpha/beta/rc tags
 version_file = '../../mmcls/version.py'
 
-
-def get_version():
-    with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
-
-
-release = get_version()
+release = '0.25.0'
 
 # -- General configuration ---------------------------------------------------
 
@@ -236,12 +228,3 @@ autodoc_typehints = 'none'
 
 # The not found page
 notfound_template = '404.html'
-
-
-def builder_inited_handler(app):
-    if subprocess.run(['./stat.py']).returncode != 0:
-        raise RuntimeError('Failed to run the script `stat.py`.')
-
-
-def setup(app):
-    app.connect('builder-inited', builder_inited_handler)
