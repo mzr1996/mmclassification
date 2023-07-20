@@ -1,10 +1,22 @@
-from functools import partial
+import os
+import sys
 from pathlib import Path
+
+os.system('pip install -U mmengine')
+os.system('pip install -U mmcv-lite')
+os.system('pip install -U gradio')
+os.system('pip install -U transformers')
+pkg_root = str(Path(__file__).parents[2])
+os.system(f'pip install -e {pkg_root}')
+sys.path.append(pkg_root)
+
+from functools import partial
 from typing import Callable
 
 import gradio as gr
 import torch
 from mmengine.logging import MMLogger
+from mmengine.utils.dl_utils.hub import load_url as torch_load_url
 
 import mmpretrain
 from mmpretrain.apis import (ImageCaptionInferencer,
@@ -13,7 +25,6 @@ from mmpretrain.apis import (ImageCaptionInferencer,
                              TextToImageRetrievalInferencer,
                              VisualGroundingInferencer,
                              VisualQuestionAnsweringInferencer)
-from mmpretrain.utils.dependency import WITH_MULTIMODAL
 from mmpretrain.visualization import UniversalVisualizer
 
 mmpretrain.utils.progress.disable_progress_bar = True
@@ -27,6 +38,23 @@ if torch.cuda.is_available():
 else:
     gpus = None
     logger.info('No available GPU.')
+
+
+def load_url(url, retry=1):
+    from torch.hub import get_dir
+    from urllib.parse import urlparse
+
+    model_dir = os.path.join(get_dir(), 'checkpoints')
+    parts = urlparse(url)
+    filename = os.path.basename(parts.path)
+    cached_file = os.path.join(model_dir, filename)
+
+    try:
+        return torch_load_url(url)
+    except Exception:
+        if retry > 0:
+            os.remove(cached_file)
+            return load_url(url, retry=retry - 1)
 
 
 def get_free_device():
@@ -69,7 +97,11 @@ class ImageCaptionTab:
 
     def __init__(self) -> None:
         self.model_list = ImageCaptionInferencer.list_models()
+        # Llava doesn't have pre-trained weights
+        self.model_list.remove('llava-7b-v1_caption')
         self.tab = self.create_ui()
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -112,21 +144,21 @@ class ImageCaptionTab:
             inferencer_name, partial(ImageCaptionInferencer, model))
 
         result = inferencer(image)[0]
+        logger.info(f'{self.__class__.__name__}: {result.get("pred_caption")}')
         return result['pred_caption']
 
 
 class ImageClassificationTab:
 
     def __init__(self) -> None:
-        self.short_list = [
-            'resnet50_8xb32_in1k',
+        self.model_list = [
             'resnet50_8xb256-rsb-a1-600e_in1k',
             'swin-base_16xb64_in1k',
             'convnext-base_32xb128_in1k',
-            'vit-base-p16_32xb128-mae_in1k',
         ]
-        self.long_list = ImageClassificationInferencer.list_models()
         self.tab = self.create_ui()
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -135,17 +167,17 @@ class ImageClassificationTab:
                     label='Choose a model',
                     elem_id='image_classification_models',
                     elem_classes='select_model',
-                    choices=self.short_list,
+                    choices=self.model_list,
                     value='swin-base_16xb64_in1k',
                 )
-                expand = gr.Checkbox(label='Browse all models')
+                #  expand = gr.Checkbox(label='Browse all models')
 
-                def browse_all_model(value):
-                    models = self.long_list if value else self.short_list
-                    return gr.update(choices=models)
+                #  def browse_all_model(value):
+                #      models = self.long_list if value else self.short_list
+                #      return gr.update(choices=models)
 
-                expand.select(
-                    fn=browse_all_model, inputs=expand, outputs=select_model)
+                #  expand.select(
+                #      fn=browse_all_model, inputs=expand, outputs=select_model)
             with gr.Column():
                 in_image = gr.Image(
                     label='Input',
@@ -175,8 +207,10 @@ class ImageClassificationTab:
         inferencer_name = self.__class__.__name__ + model
         inferencer = InferencerCache.get_instance(
             inferencer_name, partial(ImageClassificationInferencer, model))
-        result = inferencer(image)[0]['pred_scores'].tolist()
+        result = inferencer(image)[0]
 
+        logger.info(f'{self.__class__.__name__}: {result.get("pred_class")}')
+        result = result['pred_scores'].tolist()
         if inferencer.classes is not None:
             classes = inferencer.classes
         else:
@@ -190,6 +224,8 @@ class ImageRetrievalTab:
     def __init__(self) -> None:
         self.model_list = ImageRetrievalInferencer.list_models()
         self.tab = self.create_ui()
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -201,7 +237,8 @@ class ImageRetrievalTab:
                     choices=self.model_list,
                     value='resnet50-arcface_inshop',
                 )
-                topk = gr.Slider(minimum=1, maximum=6, value=3, step=1)
+                topk = gr.Slider(
+                    minimum=1, maximum=6, value=3, step=1, label='topk')
             with gr.Column():
                 prototype = gr.File(
                     label='Retrieve from',
@@ -251,6 +288,8 @@ class ImageRetrievalTab:
         )
 
         result = inferencer(image, topk=min(topk, len(prototype)))[0]
+        logger.info(
+            f'{self.__class__.__name__}: {result[0].get("match_score")}')
         return [(str(item['sample']['img_path']),
                  str(item['match_score'].cpu().item())) for item in result]
 
@@ -260,6 +299,8 @@ class TextToImageRetrievalTab:
     def __init__(self) -> None:
         self.model_list = TextToImageRetrievalInferencer.list_models()
         self.tab = self.create_ui()
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -271,7 +312,8 @@ class TextToImageRetrievalTab:
                     choices=self.model_list,
                     value='blip-base_3rdparty_coco-retrieval',
                 )
-                topk = gr.Slider(minimum=1, maximum=6, value=3, step=1)
+                topk = gr.Slider(
+                    minimum=1, maximum=6, value=3, step=1, label='topk')
             with gr.Column():
                 prototype = gr.File(
                     file_count='multiple', file_types=['image'])
@@ -315,6 +357,8 @@ class TextToImageRetrievalTab:
         )
 
         result = inferencer(text, topk=min(topk, len(prototype)))[0]
+        logger.info(
+            f'{self.__class__.__name__}: {result[0].get("match_score")}')
         return [(str(item['sample']['img_path']),
                  str(item['match_score'].cpu().item())) for item in result]
 
@@ -326,6 +370,8 @@ class VisualGroundingTab:
         self.tab = self.create_ui()
         self.visualizer = UniversalVisualizer(
             fig_save_cfg=dict(figsize=(16, 9)))
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -379,6 +425,7 @@ class VisualGroundingTab:
             image[:, :, ::-1], text, return_datasamples=True)[0]
         vis = self.visualizer.visualize_visual_grounding(
             image, result, resize=512)
+        logger.info(f'{self.__class__.__name__}: {result.get("pred_bboxes")}')
         return vis
 
 
@@ -389,6 +436,8 @@ class VisualQuestionAnsweringTab:
         # The fine-tuned OFA vqa models requires extra object description.
         self.model_list.remove('ofa-base_3rdparty-finetuned_vqa')
         self.tab = self.create_ui()
+        for model in self.model_list:
+            load_url(mmpretrain.ModelHub.get(model).weights)
 
     def create_ui(self):
         with gr.Row():
@@ -434,6 +483,7 @@ class VisualQuestionAnsweringTab:
             inferencer_name, partial(VisualQuestionAnsweringInferencer, model))
 
         result = inferencer(image, question)[0]
+        logger.info(f'{self.__class__.__name__}: {result}')
         return result['pred_answer']
 
 
@@ -444,23 +494,15 @@ if __name__ == '__main__':
         with gr.Tabs():
             with gr.TabItem('Image Classification'):
                 ImageClassificationTab()
+            with gr.TabItem('Image Caption'):
+                ImageCaptionTab()
             with gr.TabItem('Image-To-Image Retrieval'):
                 ImageRetrievalTab()
-            if WITH_MULTIMODAL:
-                with gr.TabItem('Image Caption'):
-                    ImageCaptionTab()
-                with gr.TabItem('Text-To-Image Retrieval'):
-                    TextToImageRetrievalTab()
-                with gr.TabItem('Visual Grounding'):
-                    VisualGroundingTab()
-                with gr.TabItem('Visual Question Answering'):
-                    VisualQuestionAnsweringTab()
-            else:
-                with gr.TabItem('Multi-modal tasks'):
-                    gr.Markdown(
-                        'To inference multi-modal models, please install '
-                        'the extra multi-modal dependencies, please refer '
-                        'to https://mmpretrain.readthedocs.io/en/latest/'
-                        'get_started.html#installation')
+            with gr.TabItem('Text-To-Image Retrieval'):
+                TextToImageRetrievalTab()
+            with gr.TabItem('Visual Grounding'):
+                VisualGroundingTab()
+            with gr.TabItem('Visual Question Answering'):
+                VisualQuestionAnsweringTab()
 
-    demo.launch()
+    demo.launch(server_name='0.0.0.0')
